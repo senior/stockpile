@@ -2,7 +2,8 @@
   (:require [puppetlabs.stockpile.queue :as stock]
             [clojure.java.io :as io]
             [clojure.java.shell :as shell]
-            [clojure.test :refer :all])
+            [clojure.test :refer :all]
+            [clojure.set :as cset])
   (:import
    [org.apache.commons.lang3 RandomStringUtils]
    [java.io ByteArrayInputStream File IOException]
@@ -111,37 +112,43 @@
 
 (deftest basic-persistence
   ;; Some of the validation is handled implicitly by store-str
-  (call-with-temp-dir-path
-   (fn [tmpdir]
-     (let [qdir (.toFile (.resolve tmpdir "queue"))
-           ent-1-id (-> (stock/create qdir) (store-str "foo") stock/entry-id)
-           ;; Check that a reduce with 1 item looks right
-           _ (let [q (stock/open qdir)
-                   entries-read (stock/reduce q conj ())]
-               (is (= [(stock/entry ent-1-id nil)] entries-read))
-               (let [[ent] entries-read]
-                 (is (= "foo" (slurp-entry q ent)))
-                 (is (= ent-1-id (stock/entry-id ent)))
-                 (is (not (stock/entry-meta ent)))))
-           ent-2-id (-> (stock/open qdir)
-                        (store-str "bar" "meta bar")
-                        stock/entry-id)]
+  (testing "basic persistence with a reduce call"
+    (call-with-temp-dir-path
+     (fn [tmpdir]
+       (let [qdir (.toFile (.resolve tmpdir "queue"))
+             ent-1 (-> (stock/create qdir) (store-str "foo"))
+             ent-1-id  (stock/entry-id ent-1)
+             q (stock/open qdir)
+             ;; Check that a reduce with 1 item looks right
+             ]
+         (is (= [ent-1]
+                (stock/reduce q conj ())))
+         (is (= "foo" (slurp-entry q ent-1)))
+         (is (not (stock/entry-meta ent-1)))))))
+
+  (testing "multiple calls to reduce yield correct results"
+    (call-with-temp-dir-path
+     (fn [tmpdir]
        ;; Check that a reduce after adding an item looks right
-       (let [q (stock/open qdir)
-             entries-read (stock/reduce q conj #{})]
-         (is (= #{(stock/entry ent-1-id nil)
-                  (stock/entry ent-2-id "meta bar")}
-                (set entries-read)))
-         (let [find-ent (fn [id x]
-                          (->> x (filter #(= id (stock/entry-id %))) first))
-               ent-1 (find-ent ent-1-id entries-read)
-               ent-2 (find-ent ent-2-id entries-read)]
-           (is ent-1-id (stock/entry-id ent-1))
-           (is (not (stock/entry-meta ent-1)))
-           (is ent-2-id (stock/entry-id ent-2))
-           (is (= "meta bar" (stock/entry-meta ent-2)))
-           (is (= "foo" (slurp-entry q ent-1)))
-           (is (= "bar" (slurp-entry q ent-2)))))))))
+       (let [qdir (.toFile (.resolve tmpdir "queue"))
+             ent-1 (-> (stock/create qdir) (store-str "foo"))
+             ent-1-id (stock/entry-id ent-1)
+             first-entries-read (-> qdir
+                                    stock/open
+                                    (stock/reduce conj #{}))
+             q (stock/open qdir)
+             ent-2 (store-str q "bar" "meta bar")
+             ent-2-id (stock/entry-id ent-2)
+             second-entries-read (stock/reduce q conj #{})]
+
+         (is (= #{ent-1}
+                first-entries-read))
+         (is (= #{ent-1 ent-2}
+                second-entries-read))
+
+         (is (cset/subset? first-entries-read second-entries-read))
+         (is (= "foo" (slurp-entry q ent-1)))
+         (is (= "bar" (slurp-entry q ent-2))))))))
 
 (deftest empty-queue-reduction
   (call-with-temp-dir-path
