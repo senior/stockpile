@@ -115,6 +115,13 @@
              (is (= "foo" (slurp-entry q entry-1)))
              (is (= "bar" (slurp-entry q entry-2))))))))))
 
+(deftest empty-queue-reduction
+  (call-with-temp-dir-path
+   (fn [tmpdir]
+     (let [qdir (.toFile (.resolve tmpdir "queue"))
+           q (stock/create qdir)]
+       (is (= 13 (stock/reduce q #(throw (Exception. "unexpected")) 13)))))))
+
 (deftest entry-manipulation
   (call-with-temp-dir-path
    (fn [tmpdir]
